@@ -1,0 +1,145 @@
+---
+- name: Setup and configure server with GeoServer
+  hosts: localhost
+  become: yes
+
+  tasks:
+    - name: Install unzip
+      apt:
+        name: unzip
+        state: present
+
+    - name: Update and upgrade apt packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install default JDK
+      apt:
+        name: default-jdk
+        state: present
+
+    - name: Install OpenSSH server
+      apt:
+        name: openssh-server
+        state: present
+
+    - name: Start and enable SSH service
+      systemd:
+        name: ssh
+        state: started
+        enabled: yes
+
+    - name: Install Apache2
+      apt:
+        name: apache2
+        state: present
+
+    - name: Add Apache2 PPA repository
+      apt_repository:
+        repo: ppa:ondrej/apache2
+        state: present
+
+    - name: Update apt cache after adding repository
+      apt:
+        update_cache: yes
+
+    - name: Install UFW (Uncomplicated Firewall)
+      apt:
+        name: ufw
+        state: present
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    - name: Allow specific IPs through UFW
+      ufw:
+        rule: allow
+        from_ip: "{{ item }}"
+      loop:
+        - 52.214.221.145
+        - 52.50.207.205
+        - 34.255.188.27
+        - 109.0.28.108
+        - 52.211.149.81
+        - 52.49.122.126
+        - 54.76.16.128
+        - 94.185.65.65
+
+    - name: Set Apache headers for Access-Control-Allow-Origin
+      lineinfile:
+        path: /etc/apache2/conf-enabled/httpd.conf
+        create: yes
+        line: "{{ item }}"
+      loop:
+        - 'Header set Access-Control-Allow-Origin "https://apps.sogelink.fr"'
+        - 'Header set Access-Control-Allow-Origin "https://staging.apps.sogelink.fr"'
+        - 'Header set Access-Control-Allow-Origin "https://inte.apps.sogelink.fr"'
+
+    - name: Download GeoServer
+      get_url:
+        url: https://sourceforge.net/projects/geoserver/files/GeoServer/2.21.0/geoserver-2.21.0-bin.zip
+        dest: /tmp/geoserver-2.21.0-bin.zip
+
+    - name: Create GeoServer directory
+      file:
+        path: /usr/share/geoserver
+        state: directory
+
+    - name: Unzip GeoServer
+      unarchive:
+        src: /tmp/geoserver-2.21.0-bin.zip
+        dest: /usr/share/geoserver
+        creates: /usr/share/geoserver/bin
+
+    - name: Create geoserver user
+      user:
+        name: geoserver
+        shell: /bin/false
+        create_home: yes
+
+    - name: Set ownership for GeoServer directory
+      file:
+        path: /usr/share/geoserver
+        state: directory
+        owner: geoserver
+        group: geoserver
+        recurse: yes
+
+    - name: Create systemd service file for GeoServer
+      copy:
+        dest: /etc/systemd/system/geoserver.service
+        content: |
+          [Unit]
+          Description=GeoServer Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=geoserver
+          Group=geoserver
+          Environment="GEOSERVER_HOME=/usr/share/geoserver"
+          ExecStart=/usr/share/geoserver/bin/startup.sh
+          ExecStop=/usr/share/geoserver/bin/shutdown.sh
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start GeoServer service
+      systemd:
+        name: geoserver
+        state: started
+        enabled: yes
+
+    - name: Check if GeoServer is running
+      shell: ss -antpl | grep 8080
+      register: geoserver_status
+
+    - debug:
+        msg: "GeoServer is running on port 8080"
+      when: geoserver_status.stdout != ""
